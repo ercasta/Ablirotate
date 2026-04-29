@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ablirotate"
+version = "0.1.0"
+description = "Techniques for shrinking LLMs via activation-based pruning, matrix defragmentation, and differential abliteration"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+dependencies = [
+    "torch>=2.0",
+    "transformers>=4.35",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ablirotate*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
