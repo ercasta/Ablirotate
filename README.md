@@ -230,6 +230,49 @@ metric, expansion utilities, and a loop orchestrator (see
 
 ---
 
+## Part 3 – Autonomous sandbox agent
+
+A practical extension of the interleaved loop where a **single model instance
+runs unattended** on a specific class of tasks (e.g. Python + Git coding)
+while a separate, unmodified copy of the original model handles everything
+else.  The original model provides the *universal neuron* reference — its
+activation profile on unrelated prompts defines which neurons must remain
+frozen in the agent — and acts as a quality referee.
+
+The autonomous loop follows the same four-phase structure as the interleaved
+training loop, driven by a timer rather than a human operator:
+
+| Phase | What happens |
+|---|---|
+| **Observation** | Agent handles tasks; `ActivationTracker` accumulates stats silently. Reference model profiles unrelated prompts. |
+| **Reorder** | `DifferentialAbliterator` + `MatrixDefragmenter` permute weight matrices; universal neurons migrate to the frozen prefix `[:U]`. |
+| **Graduated pruning** | Drop-specific neurons are soft-pruned → cold-gated → hard-pruned over successive cycles according to a `NeuronForgetSchedule`. |
+| **Micro-training** | Only the specific segment `[U:]` is trained on a rolling replay buffer of recent agent tasks. |
+
+### Hardware quick-reference
+
+| Model | Minimum VRAM (bfloat16) | Minimum VRAM (4-bit base) |
+|---|---|---|
+| Gemma 4 26–27B MoE | ~40 GB (single A100 80 GB or 2× A100 40 GB) | ~20–24 GB (single A100 40 GB) |
+| 8B (Llama-3, Gemma-3, Qwen2.5) | ~24 GB (single 3090) | ~12 GB (single 3080 Ti / 4070) |
+| 2B (Gemma-3-2B, Phi-3-mini) | ~8–10 GB (single 3080 Ti) | ~6 GB (single 3070 Ti) |
+
+### Minimising VRAM at the cost of training speed
+
+1. **4-bit quantise the universal prefix** — halves VRAM for the frozen part.
+2. **Neuron micro-batch training** — unfreeze and update `M` neurons at a time;
+   optimizer state shrinks from `O(N_specific)` to `O(M)`.
+3. **Layer-serial training** — train one layer at a time; allocates optimizer
+   state only for that layer.
+4. **Gradient checkpointing** on the universal segment — recompute activations
+   during backward, saving ~40% activation memory.
+
+→ See [`AUTONOMOUS_AGENT.md`](AUTONOMOUS_AGENT.md) for the full design,
+detailed hardware tables, RAM-minimisation techniques, and a list of new
+components required to implement the approach.
+
+---
+
 ## API reference
 
 ### `ActivationTracker(model, threshold, track_mlp, track_attention, mlp_submodule_name, attn_submodule_name)`
@@ -278,6 +321,10 @@ Registers forward hooks on every sub-module whose name ends with
 - [`INTERLEAVED_TRAINING.md`](INTERLEAVED_TRAINING.md) – full algorithm
   specification for the interleaved reordering–freezing training loop,
   convergence analysis, and comparison with EWC, PackNet, and MoE approaches.
+- [`AUTONOMOUS_AGENT.md`](AUTONOMOUS_AGENT.md) – design for an unattended
+  sandbox agent that self-specialises through periodic retraining, including
+  hardware requirements for Gemma 4 27B, 8B, and 2B models and a catalogue
+  of VRAM-minimisation techniques.
 
 ---
 
