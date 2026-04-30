@@ -337,6 +337,10 @@ Registers forward hooks on every sub-module whose name ends with
   sandbox agent that self-specialises through periodic retraining, including
   hardware requirements for Gemma 4 27B, 8B, and 2B models and a catalogue
   of VRAM-minimisation techniques.
+- [`COMPARATIVE_STUDY.md`](COMPARATIVE_STUDY.md) – practical study design for
+  comparing interleaved training against full SFT, LoRA, and post-training-only
+  baselines on SWE-bench (Python + Git coding), targeting 8B and 2B models on
+  a single consumer GPU with no human intervention required.
 
 ---
 
