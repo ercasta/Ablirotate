@@ -250,7 +250,7 @@ class DifferentialAbliterator:
         :class:`~ablirotate.defrag.MatrixDefragmenter` can safely truncate
         from the tail:
 
-        1. **common** – shared keep+drop neurons (central; must preserve).
+        1. **common** – neurons active in both keep and drop categories (central; must preserve).
         2. **keep_specific** – active only in keep categories (desired).
         3. **neutral** – active in neither group (harmless).
         4. **drop_specific** – active only in drop categories (remove queue).

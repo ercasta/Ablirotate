@@ -240,10 +240,10 @@ class TestDifferentialAbliterator:
         # common indices (0, 4) must appear before keep_specific (1),
         # which must appear before neutral (3),
         # which must appear before drop_specific (2).
-        common_pos   = [idx.index(i) for i in (0, 4)]
-        keep_pos     = [idx.index(1)]
-        neutral_pos  = [idx.index(3)]
-        drop_pos     = [idx.index(2)]
+        common_pos  = [idx.index(i) for i in (0, 4)]
+        keep_pos    = [idx.index(1)]
+        neutral_pos = [idx.index(3)]
+        drop_pos    = [idx.index(2)]
 
         assert max(common_pos) < min(keep_pos)
         assert max(keep_pos)   < min(neutral_pos)
