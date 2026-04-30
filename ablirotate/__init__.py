@@ -14,6 +14,13 @@ from .qwen_coder import (
     QwenCoderDefragmenter,
     QwenCoderPipeline,
 )
+from .gemma4 import (
+    GEMMA4_27B_CONFIG,
+    Gemma4ActivationTracker,
+    Gemma4MlpPruner,
+    Gemma4Defragmenter,
+    Gemma4Pipeline,
+)
 
 __all__ = [
     "ActivationTracker",
@@ -26,4 +33,10 @@ __all__ = [
     "QwenCoderMlpPruner",
     "QwenCoderDefragmenter",
     "QwenCoderPipeline",
+    # Gemma 4 specific
+    "GEMMA4_27B_CONFIG",
+    "Gemma4ActivationTracker",
+    "Gemma4MlpPruner",
+    "Gemma4Defragmenter",
+    "Gemma4Pipeline",
 ]
