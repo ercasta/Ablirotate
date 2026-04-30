@@ -12,6 +12,18 @@ complementary levels of operation:
    training loop that alternates between gradient-free neuron reordering and
    selective gradient-based fine-tuning, keeping the *universal* core of the
    model frozen while the *task-specific* segment specialises.
+3. **Agentic sandbox** – deploy a single model instance that self-specialises
+   unattended on a target class of tasks (e.g. coding), guided by a frozen
+   reference copy of the original model that anchors the universal neurons
+   and acts as a quality referee.
+
+### Approach at a glance
+
+| Part | Name | One-line summary |
+|------|------|-----------------|
+| 1 | **Post-training** | Profile neuron activations with forward-pass hooks, then prune, reorder, and defragment weight matrices — no gradients, no labels, works on any checkpoint. |
+| 2 | **Interleaved training** | Cycle between a gradient-free reorder phase (neuron sorting by universality) and a gradient-based fine-tune phase (only the task-specific neuron segment is updated, universal neurons are frozen). |
+| 3 | **Agentic sandbox** | A self-contained agent loop where the model specialises autonomously on a task domain while a reference model keeps universal capabilities anchored; suitable for unattended, long-running deployment. |
 
 ---
 
