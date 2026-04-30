@@ -59,16 +59,28 @@ to the truncation boundary.
 
 The tracker is run separately for each **prompt category** (e.g. "Python code",
 "Italian prose", "COBOL code") and the resulting activation masks are stored as
-category snapshots.  A keep mask is then derived by:
+category snapshots.  Neurons are then classified into four groups by
+``DifferentialAbliterator.classify_neurons``:
 
-1. **Universal neurons**: active in *every* desired keep-category → preserved.
-2. **Category-specific neurons**: active in *any* drop-category and not in any
-   keep-category → removed.
-3. **Neutral neurons**: everything else → preserved.
+| Group | Condition | Treatment |
+|-------|-----------|-----------|
+| **common** | active in ≥ 1 keep category **and** ≥ 1 drop category | always preserved – these are *central* neurons used across all tasks |
+| **keep_specific** | active in ≥ 1 keep category, *not* in any drop category | preserved – reinforce desired capabilities |
+| **drop_specific** | active in ≥ 1 drop category, *not* in any keep category | removed – exclusively responsible for unwanted capabilities |
+| **neutral** | active in neither group | preserved |
 
-This allows a model to be specialised to a task domain (e.g. multi-language code
-generation) while neurons that are exclusively responsible for unwanted capabilities
-(e.g. COBOL output) are suppressed.
+``compute_keep_mask`` returns ``True`` for common, keep_specific, and neutral
+neurons and ``False`` for drop_specific neurons.
+
+``prioritized_indices`` returns neuron indices in the order
+**common → keep_specific → neutral → drop_specific**.  This ordering is designed
+to be fed directly to ``MatrixDefragmenter``: the most important neurons land at
+the front of each weight matrix so that tail truncation removes only drop-specific
+and truly inactive neurons.
+
+Without ``drop_categories``, the traditional intersection rule applies: a neuron
+is kept only if it is active in *every* keep category (finding the universally
+required set).
 
 ---
 
@@ -310,6 +322,33 @@ keep_mask = abliterator.compute_keep_mask(
 
 pruner = QwenCoderMlpPruner(model, tracker.mlp_stats)
 pruner.prune_to_mask(keep_mask, mode="hard")
+```
+
+To inspect the four-way neuron classification and use priority ordering with the
+defragmenter:
+
+```python
+# Inspect groups: common / keep_specific / drop_specific / neutral
+groups = abliterator.classify_neurons(
+    keep_categories=["code"],
+    drop_categories=["prose"],
+)
+for layer, g in groups.items():
+    print(
+        layer,
+        "common:", g["common"].sum().item(),
+        "keep:", g["keep_specific"].sum().item(),
+        "drop:", g["drop_specific"].sum().item(),
+        "neutral:", g["neutral"].sum().item(),
+    )
+
+# Reorder weight matrices so common → keep_specific → neutral → drop_specific
+priority_order = abliterator.prioritized_indices(
+    keep_categories=["code"],
+    drop_categories=["prose"],
+)
+# priority_order[layer_name] can be passed to MatrixDefragmenter
+# to physically place the most critical neurons at the front.
 ```
 
 ### 4.5 Expected Reduction
