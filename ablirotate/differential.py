@@ -17,11 +17,25 @@ Typical workflow
 
 The algorithm
 -------------
-* A neuron is **kept** if its activation rate in *every* keep category is
-  above ``keep_rate_threshold``.
-* A neuron is **dropped** if its activation rate in *any* drop category is
-  above ``drop_rate_threshold`` AND it was not already kept by the above rule.
-* All other neurons are **kept** (neutral → no change).
+Neurons are classified into four groups by :meth:`classify_neurons`:
+
+* **common** – active in at least one keep category *and* at least one drop
+  category.  These are central neurons shared across tasks; they must be
+  preserved unconditionally.
+* **keep_specific** – active in at least one keep category but *not* in any
+  drop category.  They reinforce desired capabilities and are kept close to the
+  common neurons.
+* **drop_specific** – active in at least one drop category but *not* in any
+  keep category.  These are the primary candidates for removal.
+* **neutral** – active in neither group.
+
+:meth:`compute_keep_mask` keeps **common**, **keep_specific**, and **neutral**
+neurons and drops **drop_specific** ones.
+
+:meth:`prioritized_indices` returns neuron indices ordered
+common → keep_specific → neutral → drop_specific, which is the preferred
+ordering for :class:`~ablirotate.defrag.MatrixDefragmenter`: the most
+important neurons appear at the front so that tail truncation is safe.
 """
 
 from __future__ import annotations
@@ -88,6 +102,84 @@ class DifferentialAbliterator:
     # Mask computation
     # ------------------------------------------------------------------
 
+    def classify_neurons(
+        self,
+        keep_categories: Sequence[str],
+        drop_categories: Optional[Sequence[str]] = None,
+    ) -> Dict[str, Dict[str, torch.Tensor]]:
+        """Classify neurons per layer into four mutually exclusive groups.
+
+        Parameters
+        ----------
+        keep_categories : sequence of str
+            Categories the model should retain capabilities for.
+        drop_categories : sequence of str, optional
+            Categories the model should suppress.
+
+        Returns
+        -------
+        dict[str, dict[str, torch.BoolTensor]]
+            Per layer, a dict with keys ``"common"``, ``"keep_specific"``,
+            ``"drop_specific"``, and ``"neutral"``.  Each value is a boolean
+            mask of length *n_units* where ``True`` means the neuron belongs
+            to that group.
+
+            - **common**: active in at least one keep category *and* at least
+              one drop category.  These central neurons are shared across tasks
+              and must be preserved unconditionally.
+            - **keep_specific**: active in at least one keep category but *not*
+              in any drop category.  They reinforce desired capabilities and
+              should be placed next to the common neurons.
+            - **drop_specific**: active in at least one drop category but *not*
+              in any keep category.  Primary candidates for removal.
+            - **neutral**: active in neither group.
+        """
+        missing = [c for c in keep_categories if c not in self._category_stats]
+        if missing:
+            raise ValueError(f"Categories not recorded: {missing}")
+
+        if drop_categories:
+            missing_drop = [c for c in drop_categories if c not in self._category_stats]
+            if missing_drop:
+                raise ValueError(f"Drop categories not recorded: {missing_drop}")
+
+        first = self._category_stats[keep_categories[0]]
+        result: Dict[str, Dict[str, torch.Tensor]] = {}
+
+        for layer_name, base_stats in first.items():
+            n = base_stats.n_units
+
+            active_in_any_keep = torch.zeros(n, dtype=torch.bool)
+            for cat in keep_categories:
+                cat_stats = self._category_stats[cat].get(layer_name)
+                if cat_stats is not None:
+                    active_in_any_keep |= (
+                        cat_stats.activation_rate >= self.keep_rate_threshold
+                    )
+
+            active_in_any_drop = torch.zeros(n, dtype=torch.bool)
+            if drop_categories:
+                for cat in drop_categories:
+                    cat_stats = self._category_stats[cat].get(layer_name)
+                    if cat_stats is not None:
+                        active_in_any_drop |= (
+                            cat_stats.activation_rate >= self.drop_rate_threshold
+                        )
+
+            common = active_in_any_keep & active_in_any_drop
+            keep_specific = active_in_any_keep & ~active_in_any_drop
+            drop_specific = active_in_any_drop & ~active_in_any_keep
+            neutral = ~active_in_any_keep & ~active_in_any_drop
+
+            result[layer_name] = {
+                "common": common,
+                "keep_specific": keep_specific,
+                "drop_specific": drop_specific,
+                "neutral": neutral,
+            }
+
+        return result
+
     def compute_keep_mask(
         self,
         keep_categories: Sequence[str],
@@ -98,11 +190,15 @@ class DifferentialAbliterator:
         Parameters
         ----------
         keep_categories : sequence of str
-            Neurons active in **all** of these categories are kept.
+            Neurons active in **all** of these categories are kept when no
+            *drop_categories* are provided.  When *drop_categories* are given,
+            any neuron active in at least one keep category is retained and
+            only **drop_specific** neurons (active in drop but not in any keep
+            category) are removed.
         drop_categories : sequence of str, optional
             Neurons active **only** in these categories (and not in any keep
             category) are dropped.  If ``None``, only the intersection rule
-            applies.
+            applies (neurons must appear in *every* keep category to be kept).
 
         Returns
         -------
@@ -115,55 +211,69 @@ class DifferentialAbliterator:
             raise ValueError(f"Categories not recorded: {missing}")
 
         if drop_categories:
-            missing_drop = [c for c in drop_categories if c not in self._category_stats]
-            if missing_drop:
-                raise ValueError(f"Drop categories not recorded: {missing_drop}")
+            # Delegate to classify_neurons: keep everything except drop_specific.
+            # common, keep_specific, and neutral neurons are all preserved.
+            classifications = self.classify_neurons(keep_categories, drop_categories)
+            return {
+                layer_name: ~groups["drop_specific"]
+                for layer_name, groups in classifications.items()
+            }
 
-        # Collect layer names from the first keep category
+        # No drop categories: keep only neurons present in ALL keep categories
+        # (intersection / "universal" rule).
         first = self._category_stats[keep_categories[0]]
         result: Dict[str, torch.Tensor] = {}
 
         for layer_name, base_stats in first.items():
             n = base_stats.n_units
 
-            # A neuron is universally active if it passes threshold in EVERY
-            # keep category.
             universal_active = torch.ones(n, dtype=torch.bool)
             for cat in keep_categories:
                 cat_stats = self._category_stats[cat].get(layer_name)
                 if cat_stats is None:
                     universal_active[:] = False
                     break
-                rate = cat_stats.activation_rate
-                universal_active &= rate >= self.keep_rate_threshold
+                universal_active &= cat_stats.activation_rate >= self.keep_rate_threshold
 
-            # Build keep mask: start by keeping universally active neurons
-            keep_mask = universal_active.clone()
+            result[layer_name] = universal_active
 
-            if drop_categories:
-                # Additionally, mark neurons that are active ONLY in drop
-                # categories (not in any keep category) as dropped.
-                active_in_any_keep = torch.zeros(n, dtype=torch.bool)
-                for cat in keep_categories:
-                    cat_stats = self._category_stats[cat].get(layer_name)
-                    if cat_stats is not None:
-                        active_in_any_keep |= (
-                            cat_stats.activation_rate >= self.keep_rate_threshold
-                        )
+        return result
 
-                active_in_any_drop = torch.zeros(n, dtype=torch.bool)
-                for cat in drop_categories:
-                    cat_stats = self._category_stats[cat].get(layer_name)
-                    if cat_stats is not None:
-                        active_in_any_drop |= (
-                            cat_stats.activation_rate >= self.drop_rate_threshold
-                        )
+    def prioritized_indices(
+        self,
+        keep_categories: Sequence[str],
+        drop_categories: Optional[Sequence[str]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """Return per-layer neuron indices sorted by preservation priority.
 
-                # Neurons active only in drop categories (not in any keep) → remove
-                drop_only = active_in_any_drop & ~active_in_any_keep
-                keep_mask = keep_mask | (~drop_only)
+        The ordering places the most important neurons first so that
+        :class:`~ablirotate.defrag.MatrixDefragmenter` can safely truncate
+        from the tail:
 
-            result[layer_name] = keep_mask
+        1. **common** – neurons active in both keep and drop categories (central; must preserve).
+        2. **keep_specific** – active only in keep categories (desired).
+        3. **neutral** – active in neither group (harmless).
+        4. **drop_specific** – active only in drop categories (remove queue).
+
+        Parameters
+        ----------
+        keep_categories : sequence of str
+        drop_categories : sequence of str, optional
+
+        Returns
+        -------
+        dict[str, torch.LongTensor]
+            Per layer, a 1-D tensor of neuron indices in priority order.
+        """
+        classifications = self.classify_neurons(keep_categories, drop_categories)
+        result: Dict[str, torch.Tensor] = {}
+
+        for layer_name, groups in classifications.items():
+            common_idx = groups["common"].nonzero(as_tuple=False).squeeze(1)
+            keep_idx = groups["keep_specific"].nonzero(as_tuple=False).squeeze(1)
+            neutral_idx = groups["neutral"].nonzero(as_tuple=False).squeeze(1)
+            drop_idx = groups["drop_specific"].nonzero(as_tuple=False).squeeze(1)
+            result[layer_name] = torch.cat([common_idx, keep_idx, neutral_idx, drop_idx])
 
         return result
 
